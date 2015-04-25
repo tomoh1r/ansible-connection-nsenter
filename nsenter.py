@@ -108,7 +108,7 @@ class Connection(object):
         ''' transfer a file from local to local '''
 
         vvv("PUT %s TO %s" % (in_path, out_path), host=self.host)
-        dir_path = subprocess(['su', '-c', "machinectl show fc21-mysql-5.7 | grep Leader | sed -e 's/RootDirectory=//g'"])
+        dir_path = subprocess.check_output(['su', '-c', "machinectl show fc21-mysql-5.7 | grep Leader | sed -e 's/RootDirectory=//g'"])
         if not os.path.exists(in_path):
             raise errors.AnsibleFileNotFound("file or module does not exist: %s" % in_path)
         try:
