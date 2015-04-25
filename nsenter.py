@@ -53,7 +53,7 @@ class Connection(object):
         if in_data:
             raise errors.AnsibleError("Internal Error: this module does not support optimized module pipelining")
 
-        pid = subprocess.check_output(['su', '-c', "machinectl show fc21-mysql-5.7 | grep Leader | sed -e 's/Leader=//g'"])
+        pid = subprocess.check_output(['su', '-c', "machinectl show {} | grep Leader | sed -e 's/Leader=//g'".format(self.host)])
         cmd = ' '.join(['nsenter -m -u -i -n -p -t', pid, cmd])
         if self.runner.become and sudoable:
             local_cmd, prompt, success_key = utils.make_become_cmd(cmd, become_user, executable, self.runner.become_method, '-H', self.runner.become_exe)
@@ -108,7 +108,7 @@ class Connection(object):
         ''' transfer a file from local to local '''
 
         vvv("PUT %s TO %s" % (in_path, out_path), host=self.host)
-        dir_path = subprocess.check_output(['su', '-c', "machinectl show fc21-mysql-5.7 | grep Leader | sed -e 's/RootDirectory=//g'"])
+        dir_path = subprocess.check_output(['su', '-c', "machinectl show {} | grep Leader | sed -e 's/RootDirectory=//g'".format(self.host)])
         if not os.path.exists(in_path):
             raise errors.AnsibleFileNotFound("file or module does not exist: %s" % in_path)
         try:
