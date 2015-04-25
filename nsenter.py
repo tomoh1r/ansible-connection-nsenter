@@ -115,24 +115,42 @@ class Connection(object):
 
     def put_file(self, in_path, out_path):
         ''' transfer a file from local to local '''
-
         vvv("PUT %s TO %s" % (in_path, out_path), host=self.host)
-        dir_path = subprocess.check_output(['su', '-c', "machinectl show {} | grep Leader | sed -e 's/RootDirectory=//g'".format(self.host)])
+        out_path = os.path.join(self._get_container_root_dir(), out_path)
         if not os.path.exists(in_path):
             raise errors.AnsibleFileNotFound("file or module does not exist: %s" % in_path)
         try:
-            shutil.copyfile(in_path, out_path)
-        except shutil.Error:
+            subprocess.check_output([
+                'su',
+                '-c',
+                ('"cp {} {}"'
+                 .format(in_path, out_path))])
+        except Exception:
             traceback.print_exc()
-            raise errors.AnsibleError("failed to copy: %s and %s are the same" % (in_path, out_path))
-        except IOError:
-            traceback.print_exc()
-            raise errors.AnsibleError("failed to transfer file to %s" % out_path)
+            raise errors.AnsibleError("Some exceptions occurred.")
 
     def fetch_file(self, in_path, out_path):
-        vvv("FETCH %s TO %s" % (in_path, out_path), host=self.host)
         ''' fetch a file from local to local -- for copatibility '''
-        self.put_file(in_path, out_path)
+        vvv("FETCH %s TO %s" % (in_path, out_path), host=self.host)
+        in_path = os.path.join(self._get_container_root_dir(), in_path)
+        if not os.path.exists(out_path):
+            raise errors.AnsibleFileNotFound("file or module does not exist: %s" % in_path)
+        try:
+            subprocess.check_output([
+                'su',
+                '-c',
+                ('"cp {} {}"'
+                 .format(in_path, out_path))])
+        except Exception:
+            traceback.print_exc()
+            raise errors.AnsibleError("Some exceptions occurred.")
+
+    def _get_container_root_dir(self):
+        return (subprocess.check_output([
+            'su',
+            '-c',
+            ("machinectl show {} | grep Leader | sed -e 's/RootDirectory=//g'"
+             .format(self.host))]))
 
     def close(self):
         ''' terminate the connection; nothing to do here '''
