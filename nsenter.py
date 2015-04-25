@@ -17,7 +17,6 @@
 
 import traceback
 import os
-import pipes
 import shutil
 import subprocess
 import select
@@ -36,7 +35,7 @@ class Connection(object):
         self.has_pipelining = False
 
         # TODO: add su(needs tty), pbrun, pfexec
-        self.become_methods_supported=['sudo']
+        self.become_methods_supported = ['sudo']
 
     def connect(self):
         ''' connect to the virtual host; nothing to do here '''
@@ -45,13 +44,15 @@ class Connection(object):
 
     def exec_command(self, cmd, tmp_path, become_user=None, sudoable=False, executable='/bin/sh', in_data=None):
         ''' run a command on the virtual host '''
-
         # su requires to be run from a terminal, and therefore isn't supported here (yet?)
         if sudoable and self.runner.become and self.runner.become_method not in self.become_methods_supported:
             raise errors.AnsibleError("Internal Error: this module does not support running commands via %s" % self.runner.become_method)
 
         if in_data:
             raise errors.AnsibleError("Internal Error: this module does not support optimized module pipelining")
+
+        if not self._validate_host():
+            raise errors.AnsibleError("invalid host name %s" % self.host)
 
         pid = subprocess.check_output(['su', '-c', "machinectl show {} | grep Leader | sed -e 's/Leader=//g'".format(self.host)])
         cmd = ' '.join(['nsenter -m -u -i -n -p -t', pid, cmd])
@@ -103,6 +104,14 @@ class Connection(object):
 
         stdout, stderr = p.communicate()
         return (p.returncode, '', stdout, stderr)
+
+    def _validate_host(self):
+        return bool(
+            subprocess.check_output([
+                'su',
+                '-c',
+                ("machinectl show {} | grep Leader | sed -e 's/Name=//g'"
+                 .format(self.host))]))
 
     def put_file(self, in_path, out_path):
         ''' transfer a file from local to local '''
