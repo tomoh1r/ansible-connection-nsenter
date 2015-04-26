@@ -17,7 +17,6 @@
 
 import traceback
 import os
-import shutil
 import subprocess
 import select
 import fcntl
@@ -42,22 +41,32 @@ class Connection(object):
 
         return self
 
-    def exec_command(self, cmd, tmp_path, become_user=None, sudoable=False, executable='/bin/sh', in_data=None):
+    def exec_command(self, cmd, tmp_path, become_user=None, sudoable=False,
+                     executable='/bin/sh', in_data=None):
         ''' run a command on the virtual host '''
-        # su requires to be run from a terminal, and therefore isn't supported here (yet?)
-        if sudoable and self.runner.become and self.runner.become_method not in self.become_methods_supported:
-            raise errors.AnsibleError("Internal Error: this module does not support running commands via %s" % self.runner.become_method)
+        # su requires to be run from a terminal,
+        # and therefore isn't supported here (yet?)
+        if (sudoable and self.runner.become and
+                self.runner.become_method not in self.become_methods_supported):
+            raise errors.AnsibleError(
+                "Internal Error: this module does not support running commands via %s"
+                % self.runner.become_method)
 
         if in_data:
-            raise errors.AnsibleError("Internal Error: this module does not support optimized module pipelining")
+            raise errors.AnsibleError(
+                "Internal Error: this module does not support optimized module pipelining")
 
         if not self._validate_host():
             raise errors.AnsibleError("invalid host name %s" % self.host)
 
-        pid = subprocess.check_output(['su', '-c', "machinectl show {} | grep Leader | sed -e 's/Leader=//g'".format(self.host)])
+        pid = subprocess.check_output([
+            ("sudo /usr/bin/machinectl show {} | grep Leader | sed -e 's/Leader=//g'"
+             .format(self.host))])
         cmd = ' '.join(['nsenter -m -u -i -n -p -t', pid, cmd])
         if self.runner.become and sudoable:
-            local_cmd, prompt, success_key = utils.make_become_cmd(cmd, become_user, executable, self.runner.become_method, '-H', self.runner.become_exe)
+            local_cmd, prompt, success_key = utils.make_become_cmd(
+                cmd, become_user, executable, self.runner.become_method, '-H',
+                self.runner.become_exe)
         else:
             if executable:
                 local_cmd = executable.split() + ['-c', cmd]
@@ -92,15 +101,23 @@ class Connection(object):
                     chunk = p.stderr.read()
                 else:
                     stdout, stderr = p.communicate()
-                    raise errors.AnsibleError('timeout waiting for %s password prompt:\n' % self.runner.become_method + become_output)
+                    raise errors.AnsibleError(
+                        'timeout waiting for %s password prompt:\n'
+                        % self.runner.become_method + become_output)
                 if not chunk:
                     stdout, stderr = p.communicate()
-                    raise errors.AnsibleError('%s output closed while waiting for password prompt:\n' % self.runner.become_method + become_output)
+                    raise errors.AnsibleError(
+                        '%s output closed while waiting for password prompt:\n'
+                        % self.runner.become_method + become_output)
                 become_output += chunk
             if success_key not in become_output:
                 p.stdin.write(self.runner.become_pass + '\n')
-            fcntl.fcntl(p.stdout, fcntl.F_SETFL, fcntl.fcntl(p.stdout, fcntl.F_GETFL) & ~os.O_NONBLOCK)
-            fcntl.fcntl(p.stderr, fcntl.F_SETFL, fcntl.fcntl(p.stderr, fcntl.F_GETFL) & ~os.O_NONBLOCK)
+            fcntl.fcntl(
+                p.stdout, fcntl.F_SETFL,
+                fcntl.fcntl(p.stdout, fcntl.F_GETFL) & ~os.O_NONBLOCK)
+            fcntl.fcntl(
+                p.stderr, fcntl.F_SETFL,
+                fcntl.fcntl(p.stderr, fcntl.F_GETFL) & ~os.O_NONBLOCK)
 
         stdout, stderr = p.communicate()
         return (p.returncode, '', stdout, stderr)
@@ -108,9 +125,7 @@ class Connection(object):
     def _validate_host(self):
         return bool(
             subprocess.check_output([
-                'su',
-                '-c',
-                ("machinectl show {} | grep Leader | sed -e 's/Name=//g'"
+                ("sudo /usr/bin/machinectl show {} | grep Leader | sed -e 's/Name=//g'"
                  .format(self.host))]))
 
     def put_file(self, in_path, out_path):
@@ -120,11 +135,7 @@ class Connection(object):
         if not os.path.exists(in_path):
             raise errors.AnsibleFileNotFound("file or module does not exist: %s" % in_path)
         try:
-            subprocess.check_output([
-                'su',
-                '-c',
-                ('"cp {} {}"'
-                 .format(in_path, out_path))])
+            subprocess.check_output(['sudo', 'cp', in_path, out_path])
         except Exception:
             traceback.print_exc()
             raise errors.AnsibleError("Some exceptions occurred.")
@@ -134,22 +145,16 @@ class Connection(object):
         vvv("FETCH %s TO %s" % (in_path, out_path), host=self.host)
         in_path = os.path.join(self._get_container_root_dir(), in_path)
         if not os.path.exists(out_path):
-            raise errors.AnsibleFileNotFound("file or module does not exist: %s" % in_path)
+            raise errors.AnsibleFileNotFound("file or module does not exist: %s" % out_path)
         try:
-            subprocess.check_output([
-                'su',
-                '-c',
-                ('"cp {} {}"'
-                 .format(in_path, out_path))])
+            subprocess.check_output(['sudo', 'cp', in_path, out_path])
         except Exception:
             traceback.print_exc()
             raise errors.AnsibleError("Some exceptions occurred.")
 
     def _get_container_root_dir(self):
         return (subprocess.check_output([
-            'su',
-            '-c',
-            ("machinectl show {} | grep Leader | sed -e 's/RootDirectory=//g'"
+            ("sudo /usr/bin/machinectl show {} | grep RootDirectory | sed -e 's/RootDirectory=//g'"
              .format(self.host))]))
 
     def close(self):
