@@ -1,9 +1,12 @@
-===============
-ansible-nsenter
-===============
+==========================
+ansible-connection-nsenter
+==========================
 
-How to Install
-==============
+It's implements ansible connector that enable you to connect to
+a systemd-nspawn container.
+
+Quick Start
+===========
 
 .. code-block:: console
 
