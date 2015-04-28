@@ -59,9 +59,7 @@ class Connection(object):
         if not self._validate_host():
             raise errors.AnsibleError("invalid host name %s" % self.host)
 
-        pid = subprocess.check_output([
-            ("sudo /usr/bin/machinectl show {} | grep Leader | sed -e 's/Leader=//g'"
-             .format(self.host))])
+        pid = self._extract_var('Leader')
         cmd = ' '.join(['nsenter -m -u -i -n -p -t', pid, cmd])
         if self.runner.become and sudoable:
             local_cmd, prompt, success_key = utils.make_become_cmd(
@@ -122,11 +120,14 @@ class Connection(object):
         stdout, stderr = p.communicate()
         return (p.returncode, '', stdout, stderr)
 
+    def _extract_var(self, key):
+        output = subprocess.check_output(['sudo', 'machinectl', 'show', self.host])
+        for row in output.split('\n'):
+            if key in row:
+                return row.strip().lstrip(key + '=')
+
     def _validate_host(self):
-        return bool(
-            subprocess.check_output([
-                ("sudo /usr/bin/machinectl show {} | grep Leader | sed -e 's/Name=//g'"
-                 .format(self.host))]))
+        return bool(self._extract_var('Name'))
 
     def put_file(self, in_path, out_path):
         ''' transfer a file from local to local '''
@@ -153,9 +154,7 @@ class Connection(object):
             raise errors.AnsibleError("Some exceptions occurred.")
 
     def _get_container_root_dir(self):
-        return (subprocess.check_output([
-            ("sudo /usr/bin/machinectl show {} | grep RootDirectory | sed -e 's/RootDirectory=//g'"
-             .format(self.host))]))
+        return self._extract_var('RootDirectory')
 
     def close(self):
         ''' terminate the connection; nothing to do here '''
