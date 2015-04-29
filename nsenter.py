@@ -86,21 +86,38 @@ class Connection(object):
         self._sanitize_command(**params)
 
         # if multiple command then split it
-        if cmd.find('&&') != -1:
+        if any(cmd.find(x) != -1 for x in ['&&', ';']):
             # split set env and actual command
             cmd_env, cmd = self._split_env(cmd)
 
+            # calc symbol position
+            pos_and = cmd.find('&&')
+            pos_sc = cmd.find(';')  # semicolon
+            conn_and = False
+            conn_sc = False
+            if (pos_and != -1 and
+                    ((pos_sc != -1 and pos_and < pos_sc) or pos_sc == -1)):
+                pos = pos_and
+                post_pos = pos + 2
+                conn_and = True
+            else:
+                pos = pos_sc
+                post_pos = pos + 1
+                conn_sc = True
+
             # parse cmd
-            pos = cmd.find('&&')
-            cmd_pre, cmd_post = cmd[:pos].strip(), cmd[pos + 2:].strip()
+            cmd_pre, cmd_post = cmd[:pos].strip(), cmd[post_pos:].strip()
             post_params = deepcopy(params)
             params['cmd'] = ' '.join([cmd_env, cmd_pre]).strip()
             post_params['cmd'] = ' '.join([cmd_env, cmd_post]).strip()
 
             # exec cmd
             result = self._exec_command(**params)
-            if result[0] == 0:
+            if conn_and and result[0] == 0:
                 return self._exec_command(**post_params)
+            elif conn_sc:
+                self._exec_command(**post_params)
+                return result
             else:
                 return result
         else:
