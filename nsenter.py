@@ -21,6 +21,7 @@ import select
 import shlex
 import subprocess
 import traceback
+from copy import deepcopy
 
 from ansible import errors
 from ansible import utils
@@ -85,18 +86,25 @@ class Connection(object):
         self._sanitize_command(**params)
 
         # if multiple command then split it
-        if '&&' in cmd:
-            result = (1, '', '', '')
-            for c in cmd.split('&&'):
-                params['cmd'] = c.strip()
-                result = self._exec_command(**params)
-                # first value need to be 0
-                if result[0] != 0:
-                    return result
+        if cmd.find('&&') != -1:
+            # split set env and actual command
+            cmd_env, cmd = self._split_env(cmd)
+
+            # parse cmd
+            pos = cmd.find('&&')
+            cmd_pre, cmd_post = cmd[:pos].strip(), cmd[pos + 2:].strip()
+            post_params = deepcopy(params)
+            params['cmd'] = ' '.join([cmd_env, cmd_pre]).strip()
+            post_params['cmd'] = ' '.join([cmd_env, cmd_post]).strip()
+
+            # exec cmd
+            result = self._exec_command(**params)
+            if result[0] == 0:
+                return self._exec_command(**post_params)
             else:
                 return result
         else:
-            result = self._exec_command(**params)
+            return self._exec_command(**params)
 
     def _sanitize_command(self, cmd, tmp_path, become_user, sudoable,
                           executable, in_data):
@@ -113,6 +121,18 @@ class Connection(object):
             raise errors.AnsibleError(
                 "Internal Error: this module does not support optimized module pipelining")
 
+    def _split_env(self, cmd):
+        if any('=' in x for x in cmd.split(' ')):
+            cmd_env = []
+            for i, c in enumerate(cmd.split(' ')):
+                if '=' in c:
+                    cmd_env.append(c)
+                else:
+                    break
+            return ' '.join(cmd_env), ' '.join(cmd.split(' ')[i:])
+        else:
+            return '', cmd
+
     def _exec_command(self, cmd, tmp_path, become_user, sudoable,
                       executable, in_data):
         '''run a command on the virtual host'''
@@ -126,17 +146,8 @@ class Connection(object):
         nsenter = (
             'nsenter -m -u -i -n -p -t {}'
             .format(self._extract_var('Leader')))
-        if any('=' in x for x in cmd.split(' ')):
-            cmd_pre = []
-            for i, c in enumerate(cmd.split(' ')):
-                if '=' in c:
-                    cmd_pre.append(c)
-                else:
-                    break
-            cmd_post = cmd.split(' ')[i:]
-            cmd = ' '.join(cmd_pre + [nsenter] + cmd_post)
-        else:
-            cmd = ' '.join([nsenter, cmd])
+        cmd_env, cmd_plan = self._split_env(cmd)
+        cmd = ' '.join([cmd_env, nsenter, cmd_plan]).strip()
 
         if self.runner.become and sudoable:
             local_cmd, prompt, success_key = utils.make_become_cmd(
