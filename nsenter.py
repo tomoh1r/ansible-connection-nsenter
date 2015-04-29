@@ -15,11 +15,13 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
-import traceback
 import os
-import subprocess
-import select
 import fcntl
+import select
+import shlex
+import subprocess
+import traceback
+
 from ansible import errors
 from ansible import utils
 from ansible.callbacks import vvv
@@ -59,8 +61,15 @@ class Connection(object):
         if not self._validate_host():
             raise errors.AnsibleError("invalid host name %s" % self.host)
 
-        pid = self._extract_var('Leader')
-        cmd = ' '.join(['nsenter -m -u -i -n -p -t', pid, cmd])
+        # decorate nsenter command
+        nsenter = (
+            'sudo nsenter -m -u -i -n -p -t {} {}'
+            .format(self._extract_var('Leader'),
+                    self._get_container_env()))
+        cmd = ' '.join([nsenter, cmd])
+        if '&&' in cmd:
+            cmd = cmd.replace('&&', '&& ' + nsenter)
+
         if self.runner.become and sudoable:
             local_cmd, prompt, success_key = utils.make_become_cmd(
                 cmd, become_user, executable, self.runner.become_method, '-H',
@@ -125,6 +134,13 @@ class Connection(object):
         for row in output.split('\n'):
             if key in row:
                 return row.strip().lstrip(key + '=')
+
+    def _get_container_env(self):
+        pid = self._extract_var('Leader')
+        envs = subprocess.check_output(
+            shlex.split(
+                'sudo cat /proc/{}/environ'.format(pid)))
+        return ' '.join(envs.split('\0'))
 
     def _validate_host(self):
         return bool(self._extract_var('Name'))
