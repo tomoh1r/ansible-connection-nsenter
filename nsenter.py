@@ -50,20 +50,8 @@ class Connection(object):
         params = locals()
         del params['self']
 
-        # su requires to be run from a terminal,
-        # and therefore isn't supported here (yet?)
-        if (sudoable and self.runner.become and
-                self.runner.become_method not in self.become_methods_supported):
-            raise errors.AnsibleError(
-                "Internal Error: this module does not support running commands via %s"
-                % self.runner.become_method)
-
-        if in_data:
-            raise errors.AnsibleError(
-                "Internal Error: this module does not support optimized module pipelining")
-
-        if not self._validate_host():
-            raise errors.AnsibleError("invalid host name %s" % self.host)
+        # if invalid arguments, then raise error.
+        self._sanitize_command(**params)
 
         # if multiple command then split it
         if '&&' in cmd:
@@ -79,9 +67,27 @@ class Connection(object):
         else:
             result = self._exec_command(**params)
 
-    def _exec_command(self, cmd, tmp_path, become_user=None, sudoable=False,
-                     executable='/bin/sh', in_data=None):
-        ''' run a command on the virtual host '''
+    def _sanitize_command(self, cmd, tmp_path, become_user, sudoable,
+                          executable, in_data):
+        '''this func sanitize arguments'''
+        # su requires to be run from a terminal,
+        # and therefore isn't supported here (yet?)
+        if (sudoable and self.runner.become and
+                self.runner.become_method not in self.become_methods_supported):
+            raise errors.AnsibleError(
+                "Internal Error: this module does not support running commands via %s"
+                % self.runner.become_method)
+
+        if in_data:
+            raise errors.AnsibleError(
+                "Internal Error: this module does not support optimized module pipelining")
+
+        if not self._validate_host():
+            raise errors.AnsibleError("invalid host name %s" % self.host)
+
+    def _exec_command(self, cmd, tmp_path, become_user, sudoable,
+                      executable, in_data):
+        '''run a command on the virtual host'''
         # replace container env to value
         envs = self._get_container_env()
         for k, v in envs.items():
