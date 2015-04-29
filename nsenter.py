@@ -88,7 +88,17 @@ class Connection(object):
         nsenter = (
             'sudo nsenter -m -u -i -n -p -t {}'
             .format(self._extract_var('Leader')))
-        cmd = ' '.join([nsenter, cmd])
+        if any('=' in x for x in cmd.split(' ')):
+            cmd_pre = []
+            for i, c in enumerate(cmd.split(' ')):
+                if '=' in c:
+                    cmd_pre.append(c)
+                else:
+                    break
+            cmd_post = cmd.split(' ')[i:]
+            cmd = ' '.join(cmd_pre + [nsenter] + cmd_post)
+        else:
+            cmd = ' '.join([nsenter, cmd])
 
         if self.runner.become and sudoable:
             local_cmd, prompt, success_key = utils.make_become_cmd(
