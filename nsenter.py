@@ -66,7 +66,6 @@ class Connection(object):
             raise errors.AnsibleError("invalid host name %s" % self.host)
 
         # if multiple command then split it
-        params['sudoable'] = True
         if '&&' in cmd:
             result = (1, '', '', '')
             for c in cmd.split('&&'):
