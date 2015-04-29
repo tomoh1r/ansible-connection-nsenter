@@ -31,15 +31,46 @@ class Connection(object):
     ''' nsenter connection '''
 
     def __init__(self, runner, host, *args, **kwargs):
+        if os.geteuid() != 0:
+            raise errors.AnsibleError(
+                "nsenter connection requires running as root")
+
         self.runner = runner
         self.host = host
+
+        if not bool(self._extract_var('Name')):
+            raise errors.AnsibleError("invalid host name %s" % self.host)
+
         self.has_pipelining = False
+        self.chroot = self._extract_var('RootDirectory')
+        self.container_envs = self._get_container_env()
 
         # TODO: add su(needs tty), pbrun, pfexec
         self.become_methods_supported = ['sudo']
 
+    def _get_container_env(self):
+        '''return container env dict'''
+        # get environ path
+        env_path = '/proc/{}/environ'.format(self._extract_var('Leader'))
+
+        # get container env separated by null char
+        env_str = subprocess.check_output(shlex.split('cat ' + env_path))
+
+        # split null and = char
+        proc_envs = env_str.split('\0')
+        proc_envs = dict([x.split('=') for x in proc_envs if x])
+        return proc_envs
+
+    def _extract_var(self, key):
+        output = subprocess.check_output(['machinectl', 'show', self.host])
+        for row in output.split('\n'):
+            if key in row:
+                return row.strip().lstrip(key + '=')
+
     def connect(self):
         ''' connect to the virtual host; nothing to do here '''
+
+        vvv("THIS IS A CONTAINER DIR", host=self.chroot)
 
         return self
 
@@ -82,22 +113,18 @@ class Connection(object):
             raise errors.AnsibleError(
                 "Internal Error: this module does not support optimized module pipelining")
 
-        if not self._validate_host():
-            raise errors.AnsibleError("invalid host name %s" % self.host)
-
     def _exec_command(self, cmd, tmp_path, become_user, sudoable,
                       executable, in_data):
         '''run a command on the virtual host'''
         # replace container env to value
-        envs = self._get_container_env()
-        for k, v in envs.items():
+        for k, v in self.container_envs.items():
             key = '${}'.format(k)
             if key in cmd:
                 cmd = cmd.replace(key, v)
 
         # decorate nsenter command
         nsenter = (
-            'sudo nsenter -m -u -i -n -p -t {}'
+            'nsenter -m -u -i -n -p -t {}'
             .format(self._extract_var('Leader')))
         if any('=' in x for x in cmd.split(' ')):
             cmd_pre = []
@@ -170,36 +197,14 @@ class Connection(object):
         stdout, stderr = p.communicate()
         return (p.returncode, '', stdout, stderr)
 
-    def _extract_var(self, key):
-        output = subprocess.check_output(['sudo', 'machinectl', 'show', self.host])
-        for row in output.split('\n'):
-            if key in row:
-                return row.strip().lstrip(key + '=')
-
-    def _get_container_env(self):
-        '''return container env dict'''
-        # get environ path
-        env_path = '/proc/{}/environ'.format(self._extract_var('Leader'))
-
-        # get container env separated by null char
-        env_str = subprocess.check_output(shlex.split('sudo cat ' + env_path))
-
-        # split null and = char
-        proc_envs = env_str.split('\0')
-        proc_envs = dict([x.split('=') for x in proc_envs if x])
-        return proc_envs
-
-    def _validate_host(self):
-        return bool(self._extract_var('Name'))
-
     def put_file(self, in_path, out_path):
         ''' transfer a file from local to local '''
         vvv("PUT %s TO %s" % (in_path, out_path), host=self.host)
-        out_path = os.path.join(self._get_container_root_dir(), out_path.lstrip('/'))
+        out_path = os.path.join(self.chroot, out_path.lstrip('/'))
         if not os.path.exists(in_path):
             raise errors.AnsibleFileNotFound("file or module does not exist: %s" % in_path)
         try:
-            subprocess.check_output(['sudo', 'cp', in_path, out_path])
+            subprocess.check_output(['cp', in_path, out_path])
         except Exception:
             traceback.print_exc()
             raise errors.AnsibleError("Some exceptions occurred.")
@@ -207,17 +212,14 @@ class Connection(object):
     def fetch_file(self, in_path, out_path):
         ''' fetch a file from local to local -- for copatibility '''
         vvv("FETCH %s TO %s" % (in_path, out_path), host=self.host)
-        in_path = os.path.join(self._get_container_root_dir(), in_path.lstrip('/'))
+        in_path = os.path.join(self.chroot, in_path.lstrip('/'))
         if not os.path.exists(out_path):
             raise errors.AnsibleFileNotFound("file or module does not exist: %s" % out_path)
         try:
-            subprocess.check_output(['sudo', 'cp', in_path, out_path])
+            subprocess.check_output(['cp', in_path, out_path])
         except Exception:
             traceback.print_exc()
             raise errors.AnsibleError("Some exceptions occurred.")
-
-    def _get_container_root_dir(self):
-        return self._extract_var('RootDirectory')
 
     def close(self):
         ''' terminate the connection; nothing to do here '''
