@@ -71,6 +71,9 @@ class Connection(object):
             for c in cmd.split('&&'):
                 params['cmd'] = c.strip()
                 result = self.exec_command(**params)
+                # first value need to be 0
+                if result[0] != 0:
+                    return result
             else:
                 return result
 
@@ -161,8 +164,8 @@ class Connection(object):
         env_str = subprocess.check_output(shlex.split('sudo cat ' + env_path))
 
         # split null and = char
-        proc_envs = env_str.strip().split('\0')
-        proc_envs = dict([x.split('=') for x in proc_envs])
+        proc_envs = env_str.split('\0')
+        proc_envs = dict([x.split('=') for x in proc_envs if x])
         return proc_envs
 
     def _validate_host(self):
