@@ -66,17 +66,23 @@ class Connection(object):
             raise errors.AnsibleError("invalid host name %s" % self.host)
 
         # if multiple command then split it
+        params['sudoable'] = True
         if '&&' in cmd:
-            result = None
+            result = (1, '', '', '')
             for c in cmd.split('&&'):
                 params['cmd'] = c.strip()
-                result = self.exec_command(**params)
+                result = self._exec_command(**params)
                 # first value need to be 0
                 if result[0] != 0:
                     return result
             else:
                 return result
+        else:
+            result = self._exec_command(**params)
 
+    def _exec_command(self, cmd, tmp_path, become_user=None, sudoable=False,
+                     executable='/bin/sh', in_data=None):
+        ''' run a command on the virtual host '''
         # replace container env to value
         envs = self._get_container_env()
         for k, v in envs.items():
