@@ -174,7 +174,7 @@ class Connection(object):
     def put_file(self, in_path, out_path):
         ''' transfer a file from local to local '''
         vvv("PUT %s TO %s" % (in_path, out_path), host=self.host)
-        out_path = os.path.join(self._get_container_root_dir(), out_path)
+        out_path = os.path.join(self._get_container_root_dir(), out_path.lstrip('/'))
         if not os.path.exists(in_path):
             raise errors.AnsibleFileNotFound("file or module does not exist: %s" % in_path)
         try:
@@ -186,7 +186,7 @@ class Connection(object):
     def fetch_file(self, in_path, out_path):
         ''' fetch a file from local to local -- for copatibility '''
         vvv("FETCH %s TO %s" % (in_path, out_path), host=self.host)
-        in_path = os.path.join(self._get_container_root_dir(), in_path)
+        in_path = os.path.join(self._get_container_root_dir(), in_path.lstrip('/'))
         if not os.path.exists(out_path):
             raise errors.AnsibleFileNotFound("file or module does not exist: %s" % out_path)
         try:
