@@ -46,6 +46,10 @@ class Connection(object):
     def exec_command(self, cmd, tmp_path, become_user=None, sudoable=False,
                      executable='/bin/sh', in_data=None):
         ''' run a command on the virtual host '''
+        # get params
+        params = locals()
+        del params['self']
+
         # su requires to be run from a terminal,
         # and therefore isn't supported here (yet?)
         if (sudoable and self.runner.become and
@@ -61,14 +65,27 @@ class Connection(object):
         if not self._validate_host():
             raise errors.AnsibleError("invalid host name %s" % self.host)
 
+        # if multiple command then split it
+        if '&&' in cmd:
+            result = None
+            for c in cmd.split('&&'):
+                params['cmd'] = c.strip()
+                result = self.exec_command(**params)
+            else:
+                return result
+
+        # replace container env to value
+        envs = self._get_container_env()
+        for k, v in envs.items():
+            key = '${}'.format(k)
+            if key in cmd:
+                cmd = cmd.replace(key, v)
+
         # decorate nsenter command
         nsenter = (
-            'sudo nsenter -m -u -i -n -p -t {} {}'
-            .format(self._extract_var('Leader'),
-                    self._get_container_env()))
+            'sudo nsenter -m -u -i -n -p -t {}'
+            .format(self._extract_var('Leader')))
         cmd = ' '.join([nsenter, cmd])
-        if '&&' in cmd:
-            cmd = cmd.replace('&&', '&& ' + nsenter)
 
         if self.runner.become and sudoable:
             local_cmd, prompt, success_key = utils.make_become_cmd(
@@ -136,11 +153,17 @@ class Connection(object):
                 return row.strip().lstrip(key + '=')
 
     def _get_container_env(self):
-        pid = self._extract_var('Leader')
-        envs = subprocess.check_output(
-            shlex.split(
-                'sudo cat /proc/{}/environ'.format(pid)))
-        return ' '.join(envs.split('\0'))
+        '''return container env dict'''
+        # get environ path
+        env_path = '/proc/{}/environ'.format(self._extract_var('Leader'))
+
+        # get container env separated by null char
+        env_str = subprocess.check_output(shlex.split('sudo cat ' + env_path))
+
+        # split null and = char
+        proc_envs = env_str.strip().split('\0')
+        proc_envs = dict([x.split('=') for x in proc_envs])
+        return proc_envs
 
     def _validate_host(self):
         return bool(self._extract_var('Name'))
