@@ -32,9 +32,11 @@ class Connection(object):
     ''' nsenter connection '''
 
     def __init__(self, runner, host, *args, **kwargs):
-        if os.geteuid() != 0:
+        print(runner.become and runner.become_user == 'root')
+        if (not (runner.become and runner.become_user == 'root')
+                and os.geteuid() != 0):
             raise errors.AnsibleError(
-                "nsenter connection requires running as root")
+                "nsenter connection requires running as root or become")
 
         self.runner = runner
         self.host = host
