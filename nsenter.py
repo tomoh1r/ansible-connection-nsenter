@@ -1,13 +1,6 @@
-# (c) 2012, Michael DeHaan <michael.dehaan@gmail.com>
+# (c) 2015, Tomohiro NAKAMURA <quickness.net@gmail.com>
 #
-# This file is part of Ansible
-#
-# Ansible is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# Ansible is distributed in the hope that it will be useful,
+# nsenter is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
@@ -18,7 +11,6 @@
 import os
 import fcntl
 import select
-import shlex
 import subprocess
 import traceback
 from copy import deepcopy
@@ -32,7 +24,6 @@ class Connection(object):
     ''' nsenter connection '''
 
     def __init__(self, runner, host, *args, **kwargs):
-        print(runner.become and runner.become_user == 'root')
         if (not (runner.become and runner.become_user == 'root')
                 and os.geteuid() != 0):
             raise errors.AnsibleError(
@@ -57,7 +48,7 @@ class Connection(object):
         env_path = '/proc/{}/environ'.format(self._extract_var('Leader'))
 
         # get container env separated by null char
-        env_str = subprocess.check_output(shlex.split('cat ' + env_path))
+        env_str = self._exec_command('cat ' + env_path)[2]
 
         # split null and = char
         proc_envs = env_str.split('\0')
@@ -114,16 +105,16 @@ class Connection(object):
             post_params['cmd'] = ' '.join([cmd_env, cmd_post]).strip()
 
             # exec cmd
-            result = self._exec_command(**params)
+            result = self._exec_cmd_on_container(**params)
             if conn_and and result[0] == 0:
-                return self._exec_command(**post_params)
+                return self._exec_cmd_on_container(**post_params)
             elif conn_sc:
-                self._exec_command(**post_params)
+                self._exec_cmd_on_container(**post_params)
                 return result
             else:
                 return result
         else:
-            return self._exec_command(**params)
+            return self._exec_cmd_on_container(**params)
 
     def _sanitize_command(self, cmd, tmp_path, become_user, sudoable,
                           executable, in_data):
@@ -152,8 +143,8 @@ class Connection(object):
         else:
             return '', cmd
 
-    def _exec_command(self, cmd, tmp_path, become_user, sudoable,
-                      executable, in_data):
+    def _exec_cmd_on_container(self, cmd, tmp_path, become_user, sudoable,
+                               executable, in_data):
         '''run a command on the virtual host'''
         # replace container env to value
         for k, v in self.container_envs.items():
@@ -168,10 +159,17 @@ class Connection(object):
         cmd_env, cmd_plan = self._split_env(cmd)
         cmd = ' '.join([cmd_env, nsenter, cmd_plan]).strip()
 
-        if self.runner.become and sudoable:
+        return self._exec_command(cmd, executable)
+
+    def _exec_command(self, cmd, executable='/bin/sh'):
+        '''run command'''
+        host = self.host
+        runner = self.runner
+
+        if runner.become:
             local_cmd, prompt, success_key = utils.make_become_cmd(
-                cmd, become_user, executable, self.runner.become_method, '-H',
-                self.runner.become_exe)
+                cmd, runner.become_user, executable, runner.become_method, '-H',
+                runner.become_exe)
         else:
             if executable:
                 local_cmd = executable.split() + ['-c', cmd]
@@ -179,13 +177,13 @@ class Connection(object):
                 local_cmd = cmd
         executable = executable.split()[0] if executable else None
 
-        vvv("EXEC %s" % (local_cmd), host=self.host)
+        vvv("EXEC %s" % (local_cmd), host=host)
         p = subprocess.Popen(local_cmd, shell=isinstance(local_cmd, basestring),
-                             cwd=self.runner.basedir, executable=executable,
+                             cwd=runner.basedir, executable=executable,
                              stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        if self.runner.become and sudoable and self.runner.become_pass:
+        if runner.become and runner.become_pass:
             fcntl.fcntl(p.stdout, fcntl.F_SETFL,
                         fcntl.fcntl(p.stdout, fcntl.F_GETFL) | os.O_NONBLOCK)
             fcntl.fcntl(p.stderr, fcntl.F_SETFL,
@@ -199,7 +197,7 @@ class Connection(object):
                     break
 
                 rfd, wfd, efd = select.select([p.stdout, p.stderr], [],
-                                              [p.stdout, p.stderr], self.runner.timeout)
+                                              [p.stdout, p.stderr], runner.timeout)
                 if p.stdout in rfd:
                     chunk = p.stdout.read()
                 elif p.stderr in rfd:
@@ -208,15 +206,15 @@ class Connection(object):
                     stdout, stderr = p.communicate()
                     raise errors.AnsibleError(
                         'timeout waiting for %s password prompt:\n'
-                        % self.runner.become_method + become_output)
+                        % runner.become_method + become_output)
                 if not chunk:
                     stdout, stderr = p.communicate()
                     raise errors.AnsibleError(
                         '%s output closed while waiting for password prompt:\n'
-                        % self.runner.become_method + become_output)
+                        % runner.become_method + become_output)
                 become_output += chunk
             if success_key not in become_output:
-                p.stdin.write(self.runner.become_pass + '\n')
+                p.stdin.write(runner.become_pass + '\n')
             fcntl.fcntl(
                 p.stdout, fcntl.F_SETFL,
                 fcntl.fcntl(p.stdout, fcntl.F_GETFL) & ~os.O_NONBLOCK)
@@ -234,7 +232,7 @@ class Connection(object):
         if not os.path.exists(in_path):
             raise errors.AnsibleFileNotFound("file or module does not exist: %s" % in_path)
         try:
-            subprocess.check_output(['cp', in_path, out_path])
+            self._exec_command('cp {} {}'.format(in_path, out_path))
         except Exception:
             traceback.print_exc()
             raise errors.AnsibleError("Some exceptions occurred.")
@@ -246,7 +244,7 @@ class Connection(object):
         if not os.path.exists(out_path):
             raise errors.AnsibleFileNotFound("file or module does not exist: %s" % out_path)
         try:
-            subprocess.check_output(['cp', in_path, out_path])
+            self._exec_command('cp {} {}'.format(in_path, out_path))
         except Exception:
             traceback.print_exc()
             raise errors.AnsibleError("Some exceptions occurred.")
