@@ -13,7 +13,6 @@ import fcntl
 import select
 import subprocess
 import traceback
-from copy import deepcopy
 
 from ansible import errors
 from ansible import utils
@@ -71,17 +70,25 @@ class Connection(object):
     def exec_command(self, cmd, tmp_path, become_user=None, sudoable=False,
                      executable='/bin/sh', in_data=None):
         ''' run a command on the virtual host '''
-        # get params
-        params = locals()
-        del params['self']
 
-        # if invalid arguments, then raise error.
-        self._sanitize_command(**params)
+        # sanitize arguments
+        # su requires to be run from a terminal,
+        # and therefore isn't supported here (yet?)
+        if (sudoable and self.runner.become and
+                self.runner.become_method not in self.become_methods_supported):
+            raise errors.AnsibleError(
+                ("Internal Error: this module does not support "
+                 "running commands via {}")
+                .format(self.runner.become_method))
+        elif in_data:
+            raise errors.AnsibleError(
+                "Internal Error: this module does not support "
+                "optimized module pipelining")
 
         # if multiple command then split it
         if any(cmd.find(x) != -1 for x in ['&&', ';']):
             # split set env and actual command
-            cmd_env, cmd = self._split_env(cmd)
+            cmd_env, cmd = Connection._split_env(cmd)
 
             # calc symbol position
             pos_and = cmd.find('&&')
@@ -100,38 +107,25 @@ class Connection(object):
 
             # parse cmd
             cmd_pre, cmd_post = cmd[:pos].strip(), cmd[post_pos:].strip()
-            post_params = deepcopy(params)
-            params['cmd'] = ' '.join([cmd_env, cmd_pre]).strip()
-            post_params['cmd'] = ' '.join([cmd_env, cmd_post]).strip()
 
             # exec cmd
-            result = self._exec_cmd_on_container(**params)
+            cmd = ' '.join([cmd_env, cmd_pre]).strip()
+            result = self._exec_cmd_on_container(cmd, executable)
+
+            # exec post_cmd
+            post_cmd = ' '.join([cmd_env, cmd_post]).strip()
             if conn_and and result[0] == 0:
-                return self._exec_cmd_on_container(**post_params)
+                return self._exec_cmd_on_container(post_cmd, executable)
             elif conn_sc:
-                self._exec_cmd_on_container(**post_params)
+                self._exec_cmd_on_container(post_cmd, executable)
                 return result
             else:
                 return result
         else:
-            return self._exec_cmd_on_container(**params)
+            return self._exec_cmd_on_container(cmd, executable)
 
-    def _sanitize_command(self, cmd, tmp_path, become_user, sudoable,
-                          executable, in_data):
-        '''this func sanitize arguments'''
-        # su requires to be run from a terminal,
-        # and therefore isn't supported here (yet?)
-        if (sudoable and self.runner.become and
-                self.runner.become_method not in self.become_methods_supported):
-            raise errors.AnsibleError(
-                "Internal Error: this module does not support running commands via %s"
-                % self.runner.become_method)
-
-        if in_data:
-            raise errors.AnsibleError(
-                "Internal Error: this module does not support optimized module pipelining")
-
-    def _split_env(self, cmd):
+    @staticmethod
+    def _split_env(cmd):
         if any('=' in x for x in cmd.split(' ')):
             cmd_env = []
             for i, c in enumerate(cmd.split(' ')):
@@ -143,8 +137,7 @@ class Connection(object):
         else:
             return '', cmd
 
-    def _exec_cmd_on_container(self, cmd, tmp_path, become_user, sudoable,
-                               executable, in_data):
+    def _exec_cmd_on_container(self, cmd, executable):
         '''run a command on the virtual host'''
         # replace container env to value
         for k, v in self.container_envs.items():
@@ -156,34 +149,41 @@ class Connection(object):
         nsenter = (
             'nsenter -m -u -i -n -p -t {}'
             .format(self._extract_var('Leader')))
-        cmd_env, cmd_plan = self._split_env(cmd)
+        cmd_env, cmd_plan = Connection._split_env(cmd)
         cmd = ' '.join([cmd_env, nsenter, cmd_plan]).strip()
 
         return self._exec_command(cmd, executable)
 
     def _exec_command(self, cmd, executable='/bin/sh'):
         '''run command'''
+        # extract variants
         host = self.host
-        runner = self.runner
+        basedir = self.runner.basedir
+        timeout = self.runner.timeout
+        become = self.runner.become
+        become_method = self.runner.become_method
+        become_exe = self.runner.become_exe
+        become_user = self.runner.become_user
+        become_pass = self.runner.become_pass
 
-        if runner.become:
+        # calc local_cmd and executable
+        if become:
             local_cmd, prompt, success_key = utils.make_become_cmd(
-                cmd, runner.become_user, executable, runner.become_method, '-H',
-                runner.become_exe)
+                cmd, become_user, executable, become_method, '-H',
+                become_exe)
+        elif executable:
+            local_cmd = executable.split() + ['-c', cmd]
         else:
-            if executable:
-                local_cmd = executable.split() + ['-c', cmd]
-            else:
-                local_cmd = cmd
+            local_cmd = cmd
         executable = executable.split()[0] if executable else None
 
         vvv("EXEC %s" % (local_cmd), host=host)
         p = subprocess.Popen(local_cmd, shell=isinstance(local_cmd, basestring),
-                             cwd=runner.basedir, executable=executable,
+                             cwd=basedir, executable=executable,
                              stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        if runner.become and runner.become_pass:
+        if become and become_pass:
             fcntl.fcntl(p.stdout, fcntl.F_SETFL,
                         fcntl.fcntl(p.stdout, fcntl.F_GETFL) | os.O_NONBLOCK)
             fcntl.fcntl(p.stderr, fcntl.F_SETFL,
@@ -197,7 +197,7 @@ class Connection(object):
                     break
 
                 rfd, wfd, efd = select.select([p.stdout, p.stderr], [],
-                                              [p.stdout, p.stderr], runner.timeout)
+                                              [p.stdout, p.stderr], timeout)
                 if p.stdout in rfd:
                     chunk = p.stdout.read()
                 elif p.stderr in rfd:
@@ -206,15 +206,15 @@ class Connection(object):
                     stdout, stderr = p.communicate()
                     raise errors.AnsibleError(
                         'timeout waiting for %s password prompt:\n'
-                        % runner.become_method + become_output)
+                        % become_method + become_output)
                 if not chunk:
                     stdout, stderr = p.communicate()
                     raise errors.AnsibleError(
                         '%s output closed while waiting for password prompt:\n'
-                        % runner.become_method + become_output)
+                        % become_method + become_output)
                 become_output += chunk
             if success_key not in become_output:
-                p.stdin.write(runner.become_pass + '\n')
+                p.stdin.write(become_pass + '\n')
             fcntl.fcntl(
                 p.stdout, fcntl.F_SETFL,
                 fcntl.fcntl(p.stdout, fcntl.F_GETFL) & ~os.O_NONBLOCK)
