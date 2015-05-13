@@ -15,7 +15,7 @@ Quick Start
 
 .. code-block:: console
 
-   $ sudo mkdir -p /etc/ansible/plugins/connection_plugins
-   $ sudo curl https://raw.githubusercontent.com/jptomo/ansible-nsenter/master/nsenter.py -o /etc/ansible/plugins/connection_plugins/nsenter.py
+   $ mkdir connection_plugins
+   $ curl https://raw.githubusercontent.com/jptomo/ansible-nsenter/master/nsenter.py -o connection_plugins/nsenter.py
 
 Then add `connection_plugins` to your `ansible.cfg` or else.
