@@ -86,24 +86,30 @@ class Connection(object):
                 "optimized module pipelining")
 
         # if multiple command then split it
-        if any(cmd.find(x) != -1 for x in ['&&', ';']):
+        if any(cmd.find(x) != -1 for x in ['&&', '||', ';']):
             # split set env and actual command
             cmd_env, cmd = Connection._split_env(cmd)
 
             # calc symbol position
             pos_and = cmd.find('&&')
+            if pos_and == -1:
+                pos_and = len(cmd)
+            pos_or = cmd.find('||')
+            if pos_or == -1:
+                pos_or = len(cmd)
             pos_sc = cmd.find(';')  # semicolon
-            conn_and = False
-            conn_sc = False
-            if (pos_and != -1 and
-                    ((pos_sc != -1 and pos_and < pos_sc) or pos_sc == -1)):
+            if pos_sc == -1:
+                pos_sc = len(cmd)
+
+            if pos_and < pos_or and pos_and < pos_sc:
                 pos = pos_and
                 post_pos = pos + 2
-                conn_and = True
+            elif pos_or < pos_and and pos_or < pos_sc:
+                pos = pos_or
+                post_pos = pos + 2
             else:
                 pos = pos_sc
                 post_pos = pos + 1
-                conn_sc = True
 
             # parse cmd
             cmd_pre, cmd_post = cmd[:pos].strip(), cmd[post_pos:].strip()
@@ -114,12 +120,24 @@ class Connection(object):
 
             # exec post_cmd
             post_cmd = ' '.join([cmd_env, cmd_post]).strip()
-            if conn_and and result[0] == 0:
-                return self._exec_cmd_on_container(post_cmd, executable)
-            elif conn_sc:
-                self._exec_cmd_on_container(post_cmd, executable)
-                return result
+            if pos_and < pos_or and pos_and < pos_sc:
+                if result[0] == 0:
+                    return self._exec_cmd_on_container(post_cmd, executable)
+                elif post_cmd.find('||') != -1:
+                    post_cmd = ' '.join([cmd_env, post_cmd[post_cmd.find('||') + 2:]]).strip()
+                    return self._exec_cmd_on_container(post_cmd, executable)
+                else:
+                    raise errors.AnsibleError('{} not success.'.format(cmd))
+            elif pos_or < pos_and and pos_or < pos_sc:
+                if result[0] != 0:
+                    return self._exec_cmd_on_container(post_cmd, executable)
+                elif post_cmd.find('&&') != -1:
+                    post_cmd = ' '.join([cmd_env, post_cmd[post_cmd.find('&&') + 2:]]).strip()
+                    return self._exec_cmd_on_container(post_cmd, executable)
+                else:
+                    raise errors.AnsibleError('{} success.'.format(cmd))
             else:
+                self._exec_cmd_on_container(post_cmd, executable)
                 return result
         else:
             return self._exec_cmd_on_container(cmd, executable)
