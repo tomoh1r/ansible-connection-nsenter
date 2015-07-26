@@ -38,44 +38,44 @@ If you finish steps below, you can see this directory structure.
 
 1. Create connection_plugin directory under Ansible directory.
 
-.. code-block:: console
+   .. code-block:: console
 
-   $ cd /path/to/ansible/working/dir/
-   $ mkdir connection_plugins
-   $ curl https://raw.githubusercontent.com/jptomo/ansible-nsenter/master/nsenter.py -o connection_plugins/nsenter.py
+      $ cd /path/to/ansible/working/dir/
+      $ mkdir connection_plugins
+      $ curl https://raw.githubusercontent.com/jptomo/ansible-nsenter/master/nsenter.py -o connection_plugins/nsenter.py
 
 2. Specify your container on your Ansible Inventory.
 
-Like this
+   Like this
 
-.. code-block:: console
+   .. code-block:: console
 
-   $ cat > hosts
-   <container_name>
+      $ cat > hosts
+      <container_name>
 
 3. Add Ansible playbook.
 
-Like this
+   Like this
 
-.. code-block:: console
+   .. code-block:: console
 
-   $ cat > playbook.yml
-   ---
-   - hosts: all
-     connection: nsenter
-     become: yes
-     tasks:
-     - command: uname -a
-       register: foo
-     - debug: msg="{{foo}}"
+      $ cat > playbook.yml
+      ---
+      - hosts: all
+        connection: nsenter
+        become: yes
+        tasks:
+        - command: uname -a
+          register: foo
+        - debug: msg="{{foo}}"
 
-You must specify ``connection: nsenter`` and ``become: yes``.
+   You must specify ``connection: nsenter`` and ``become: yes``.
 
 4. Run ansible-playbook command with K option.
 
-The nsenter connection plusgin needs sudo permission, and if you run command
-below, you shoud specify your current user's password.
+   The nsenter connection plusgin needs sudo permission, and if you run command
+   below, you shoud specify your current user's password.
 
-.. code-block:: console
+   .. code-block:: console
 
-   $ ansible-playbook -i hosts playbook.yml -K
+      $ ansible-playbook -i hosts playbook.yml -K
