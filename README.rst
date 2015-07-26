@@ -32,7 +32,7 @@ If you finish steps below, you can see this directory structure.
   $ tree
   .
   ├── connection_plugins
-  │   ├── nsenter.py
+  │   └── nsenter.py
   ├── hosts
   └── playbook.yml
 
